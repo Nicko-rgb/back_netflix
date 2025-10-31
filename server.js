@@ -18,18 +18,21 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // Configuración de la base de datos Railway
+console.log('Variables de entorno DB:');
+console.log('DB_HOST:', process.env.DB_HOST);
+console.log('DB_PORT:', process.env.DB_PORT);
+console.log('DB_USER:', process.env.DB_USER);
+console.log('DB_NAME:', process.env.DB_NAME);
+
 const dbConfig = {
     host: process.env.DB_HOST,
-    port: process.env.DB_PORT || 3306,
+    port: parseInt(process.env.DB_PORT) || 3306,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0,
-    acquireTimeout: 60000,
-    timeout: 60000,
-    reconnect: true
+    queueLimit: 0
 };
 
 // Crear un pool de conexiones
