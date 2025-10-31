@@ -19,14 +19,17 @@ app.use(bodyParser.json());
 
 // Configuración de la base de datos Railway
 const dbConfig = {
-    host: process.env.DATA_BASE_URL ? process.env.DATA_BASE_URL.split(':')[0] : process.env.DB_HOST,
-    port: process.env.DATA_BASE_URL ? parseInt(process.env.DATA_BASE_URL.split(':')[1]) : 3306,
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT || 3306,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0
+    queueLimit: 0,
+    acquireTimeout: 60000,
+    timeout: 60000,
+    reconnect: true
 };
 
 // Crear un pool de conexiones
@@ -53,47 +56,114 @@ transporter.verify((error, success) => {
 // Función para ejecutar el script SQL de inicialización
 async function initializeDatabase() {
     try {
+        // Primero crear las tablas necesarias
+        console.log('Creando tablas en la base de datos Railway...');
+        
+        // Crear tabla de usuarios
+        await pool.promise().query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                email VARCHAR(100) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Crear tabla de videos
+        await pool.promise().query(`
+            CREATE TABLE IF NOT EXISTS videos (
+                id_video INT AUTO_INCREMENT PRIMARY KEY,
+                titulo VARCHAR(200),
+                genero VARCHAR(100),
+                anio VARCHAR(5),
+                imagen VARCHAR(500),
+                url VARCHAR(500),
+                descripcion VARCHAR(1000)
+            )
+        `);
+
+        // Crear tabla de favoritos
+        await pool.promise().query(`
+            CREATE TABLE IF NOT EXISTS favorites (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                video_id INT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (video_id) REFERENCES videos(id_video) ON DELETE CASCADE,
+                UNIQUE KEY unique_favorite (user_id, video_id)
+            )
+        `);
+
+        // Crear tabla de historial
+        await pool.promise().query(`
+            CREATE TABLE IF NOT EXISTS watch_history (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                video_id INT NOT NULL,
+                watched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (video_id) REFERENCES videos(id_video) ON DELETE CASCADE,
+                INDEX idx_user_watched (user_id, watched_at)
+            )
+        `);
+
+        // Crear tabla para códigos OTP
+        await pool.promise().query(`
+            CREATE TABLE IF NOT EXISTS password_reset_otps (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                email VARCHAR(100) NOT NULL,
+                otp_code VARCHAR(6) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME NOT NULL,
+                used BOOLEAN DEFAULT FALSE,
+                INDEX idx_email_otp (email, otp_code),
+                INDEX idx_expires (expires_at)
+            )
+        `);
+
+        console.log('Tablas creadas correctamente.');
+
         // Verificar si ya existen datos en la tabla videos
         const [rows] = await pool.promise().query('SELECT COUNT(*) as count FROM videos');
         
         if (rows[0].count > 0) {
-            console.log('La base de datos ya contiene datos. Omitiendo inicialización.');
+            console.log('La base de datos ya contiene videos. Omitiendo inserción de datos.');
             return;
         }
 
-        // Leer el archivo SQL
+        // Leer el archivo SQL de videos
         const sqlFilePath = path.join(__dirname, 'netfox.sql');
         
         if (!fs.existsSync(sqlFilePath)) {
-            console.log('Archivo netfox.sql no encontrado. Omitiendo inicialización.');
+            console.log('Archivo netfox.sql no encontrado. Omitiendo inserción de videos.');
             return;
         }
 
         const sqlContent = fs.readFileSync(sqlFilePath, 'utf8');
         
-        // Dividir el contenido en declaraciones individuales
-        const statements = sqlContent
+        // Extraer solo los INSERT statements
+        const insertStatements = sqlContent
             .split(';')
             .map(stmt => stmt.trim())
-            .filter(stmt => stmt.length > 0 && !stmt.startsWith('--'));
+            .filter(stmt => stmt.toLowerCase().startsWith('insert'));
 
-        console.log('Ejecutando script de inicialización de la base de datos...');
+        console.log('Insertando datos de videos...');
         
-        // Ejecutar cada declaración SQL
-        for (const statement of statements) {
+        // Ejecutar cada INSERT statement
+        for (const statement of insertStatements) {
             if (statement.trim()) {
                 try {
                     await pool.promise().query(statement);
                 } catch (error) {
-                    // Ignorar errores de tabla ya existente
-                    if (!error.message.includes('already exists')) {
-                        console.error('Error ejecutando declaración SQL:', error.message);
-                    }
+                    console.error('Error insertando datos:', error.message);
                 }
             }
         }
         
-        console.log('Script de inicialización ejecutado correctamente.');
+        console.log('Datos de videos insertados correctamente.');
         
     } catch (error) {
         console.error('Error durante la inicialización de la base de datos:', error);
