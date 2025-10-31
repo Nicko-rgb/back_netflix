@@ -133,8 +133,10 @@ async function initializeDatabase() {
         const [rows] = await pool.promise().query('SELECT COUNT(*) as count FROM videos');
         
         if (rows[0].count > 0) {
-            console.log('La base de datos ya contiene videos. Omitiendo inserción de datos.');
-            return;
+            console.log(`La base de datos ya contiene ${rows[0].count} videos.`);
+            console.log('Limpiando tabla de videos para insertar datos actualizados...');
+            await pool.promise().query('DELETE FROM videos');
+            console.log('Tabla de videos limpiada.');
         }
 
         // Leer el archivo SQL de videos
@@ -147,21 +149,24 @@ async function initializeDatabase() {
 
         const sqlContent = fs.readFileSync(sqlFilePath, 'utf8');
         
-        // Extraer solo los INSERT statements
-        const insertStatements = sqlContent
-            .split(';')
-            .map(stmt => stmt.trim())
-            .filter(stmt => stmt.toLowerCase().startsWith('insert'));
+        // Extraer solo los INSERT statements de manera más robusta
+        const insertRegex = /INSERT INTO\s+`?videos`?\s+.*?;/gis;
+        const insertStatements = sqlContent.match(insertRegex) || [];
 
+        console.log(`Encontrados ${insertStatements.length} INSERT statements`);
         console.log('Insertando datos de videos...');
         
         // Ejecutar cada INSERT statement
-        for (const statement of insertStatements) {
-            if (statement.trim()) {
+        for (let i = 0; i < insertStatements.length; i++) {
+            const statement = insertStatements[i].trim();
+            if (statement) {
                 try {
+                    console.log(`Ejecutando INSERT statement ${i + 1}/${insertStatements.length}...`);
                     await pool.promise().query(statement);
+                    console.log(`INSERT statement ${i + 1} ejecutado correctamente`);
                 } catch (error) {
-                    console.error('Error insertando datos:', error.message);
+                    console.error(`Error en INSERT statement ${i + 1}:`, error.message);
+                    console.error('Statement problemático:', statement.substring(0, 200) + '...');
                 }
             }
         }
