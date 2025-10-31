@@ -203,6 +203,11 @@ const verifyToken = (req, res, next) => {
     });
 };
 
+// crear api base con mensaje
+app.get('/', (req, res) => {
+    res.status(200).json({ message: 'Bienvenido a Netfox API' });
+});
+
 // Ruta de registro
 app.post('/api/register', async (req, res) => {
     const { email, password, name } = req.body;
