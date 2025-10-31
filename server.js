@@ -5,22 +5,28 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
-const port = 7001;
+const port = process.env.PORT || 7001;
 const JWT_SECRET = process.env.JWT_SECRET || 'netfox_secret_key';
 
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
 
-// Configuración de la base de datos
+// Configuración de la base de datos Railway
 const dbConfig = {
-    host: 'localhost',
-    user: 'root',
-    password: '',
-    database: 'netfox',
+    host: process.env.DATA_BASE_URL ? process.env.DATA_BASE_URL.split(':')[0] : process.env.DB_HOST,
+    port: process.env.DATA_BASE_URL ? parseInt(process.env.DATA_BASE_URL.split(':')[1]) : 3306,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
 };
 
 // Crear un pool de conexiones
@@ -44,14 +50,67 @@ transporter.verify((error, success) => {
     }
 });
 
+// Función para ejecutar el script SQL de inicialización
+async function initializeDatabase() {
+    try {
+        // Verificar si ya existen datos en la tabla videos
+        const [rows] = await pool.promise().query('SELECT COUNT(*) as count FROM videos');
+        
+        if (rows[0].count > 0) {
+            console.log('La base de datos ya contiene datos. Omitiendo inicialización.');
+            return;
+        }
+
+        // Leer el archivo SQL
+        const sqlFilePath = path.join(__dirname, 'netfox.sql');
+        
+        if (!fs.existsSync(sqlFilePath)) {
+            console.log('Archivo netfox.sql no encontrado. Omitiendo inicialización.');
+            return;
+        }
+
+        const sqlContent = fs.readFileSync(sqlFilePath, 'utf8');
+        
+        // Dividir el contenido en declaraciones individuales
+        const statements = sqlContent
+            .split(';')
+            .map(stmt => stmt.trim())
+            .filter(stmt => stmt.length > 0 && !stmt.startsWith('--'));
+
+        console.log('Ejecutando script de inicialización de la base de datos...');
+        
+        // Ejecutar cada declaración SQL
+        for (const statement of statements) {
+            if (statement.trim()) {
+                try {
+                    await pool.promise().query(statement);
+                } catch (error) {
+                    // Ignorar errores de tabla ya existente
+                    if (!error.message.includes('already exists')) {
+                        console.error('Error ejecutando declaración SQL:', error.message);
+                    }
+                }
+            }
+        }
+        
+        console.log('Script de inicialización ejecutado correctamente.');
+        
+    } catch (error) {
+        console.error('Error durante la inicialización de la base de datos:', error);
+    }
+}
+
 // Verificar la conexión a la base de datos al iniciar el servidor
-pool.getConnection((err, connection) => {
+pool.getConnection(async (err, connection) => {
     if (err) {
         console.error('Error conectando a la base de datos:', err);
         return;
     }
     console.log('Conexión a la base de datos MySQL establecida.');
     connection.release();
+    
+    // Ejecutar la inicialización de la base de datos
+    await initializeDatabase();
 });
 
 // Middleware para verificar token JWT
